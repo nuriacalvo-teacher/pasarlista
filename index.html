@@ -302,7 +302,7 @@ h1,h2,h3,p{margin:0}
   <div class="setting">
     <h3>Conexión con Google Sheets</h3>
     <p id="cfg-mode">URL del Apps Script (implementación web, acceso: cualquiera).</p>
-    <input id="cfg-url" type="url" placeholder="://script.google.com/a/macros/iesgoya.es/s/AKfycbzy1Z3FePwoySFE1TMeCIBAawoX4l__u33tZPLzLGLjHHD2JZjLyt2l3RFBMn8IQ7M/exec">
+    <input id="cfg-url" type="url" placeholder="https://script.google.com/macros/s/…/exec">
     <div class="btns">
       <button class="btn quiet" onclick="guardarUrl()">Guardar</button>
       <button class="btn primary" onclick="probarConexion()">Probar conexión</button>
@@ -381,8 +381,7 @@ h1,h2,h3,p{margin:0}
 /* =====================================================================
    CONFIGURACIÓN
    ===================================================================== */
-const SCRIPT_URL_POR_DEFECTO = 'https://script.google.com/a/macros/iesgoya.es/s/AKfycbzy1Z3FePwoySFE1TMeCIBAawoX4l__u33tZPLzLGLjHHD2JZjLyt2l3RFBMn8IQ7M/exec';
-  
+const SCRIPT_URL_POR_DEFECTO = 'https://script.google.com/macros/s/AKfycbzy1Z3FePwoySFE1TMeCIBAawoX4l__u33tZPLzLGLjHHD2JZjLyt2l3RFBMn8IQ7M/exec';
 const GRUPOS = ['3º A/B', '3º B/C'];
 const LETRAS = { '3º A/B': ['A', 'B'], '3º B/C': ['B', 'C'] };
 
@@ -554,7 +553,15 @@ async function sincronizarGrupo() {
   const g = S.grupo, f = S.fecha;
   try {
     await reintentarPendientes(true);
-    const r = await api({ action: 'sync', curso: g, fecha: isoAes(f) });
+    let r = await api({ action: 'sync', curso: g, fecha: isoAes(f) });
+    if ((!r.alumnos || !r.alumnos.length) && ALUMNOS_INICIALES[g]) {
+      // El grupo aún no está en la hoja: subir la lista inicial y volver a leer
+      toast(`Subiendo la lista de ${g} a la hoja…`);
+      const alumnos = ALUMNOS_INICIALES[g].map(([apellido, nombre, letra]) => ({ nombre, apellido, letra }));
+      await api({ action: 'bulkAdd', curso: g, alumnos }, 90000);
+      r = await api({ action: 'sync', curso: g, fecha: isoAes(f) });
+      toast(`${g}: ${(r.alumnos || []).length} alumnos en la hoja.`);
+    }
     if (r.alumnos && r.alumnos.length) S.alumnos[g] = r.alumnos;
     // Fusionar eventos del día: los de la hoja mandan; los locales pendientes se conservan
     const locales = (S.eventos[g + '|' + f] || []).filter(e => e.pendiente);
@@ -673,7 +680,7 @@ async function registrar(causa) {
 async function subirEvento(ev) {
   setDot('busy');
   try {
-    const r = await api({ action: 'record', id: ev.id, curso: ev.curso, nombre: ev.nombre, apellido: ev.apellido,
+    const r = await api({ action: 'record', id: ev.id, curso: ev.curso, nombre: ev.nombre, apellido: ev.apellido, letra: ev.letra || '',
                           tipo: ev.tipo, causa: ev.causa, comentario: ev.comentario, fecha: ev.fecha, hora: ev.hora });
     ev.pendiente = false;
     const a = listaGrupo(ev.curso).find(x => mismoAlumno(x, ev));
@@ -732,8 +739,8 @@ async function reintentarPendientes(silencioso) {
     try {
       if (p.op === 'record') {
         const ev = p.ev;
-        await api({ action: 'record', id: ev.id, curso: ev.curso, nombre: ev.nombre, apellido: ev.apellido, tipo: ev.tipo,
-                    causa: ev.causa, comentario: ev.comentario, fecha: ev.fecha, hora: ev.hora });
+        await api({ action: 'record', id: ev.id, curso: ev.curso, nombre: ev.nombre, apellido: ev.apellido, letra: ev.letra || '',
+                    tipo: ev.tipo, causa: ev.causa, comentario: ev.comentario, fecha: ev.fecha, hora: ev.hora });
         const k = ev.curso + '|' + ev.fechaISO;
         (S.eventos[k] || []).forEach(e => { if (e.id === ev.id) e.pendiente = false; });
       } else if (p.op === 'undo') {
