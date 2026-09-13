@@ -98,10 +98,11 @@ h1,h2,h3,p{margin:0}
 .cnt{font-size:12px;font-weight:800;padding:3px 7px;border-radius:8px;background:var(--raised);color:var(--muted);white-space:nowrap}
 .cnt.p{color:var(--positivo)} .cnt.n{color:var(--negativo)} .cnt.r{color:var(--retraso)} .cnt.f{color:var(--falta)}
 .today{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
-.today span{font-size:12px;font-weight:700;padding:3px 8px;border-radius:8px}
+.today button{font-size:12px;font-weight:700;padding:4px 8px;border-radius:8px;display:inline-flex;align-items:center;gap:5px}
+.today button i{font-style:normal;opacity:.55;font-size:13px;line-height:1}
 .today .F{background:var(--falta-bg);color:var(--falta)} .today .R{background:var(--retraso-bg);color:var(--retraso)}
+.today.pending button{opacity:.6;outline:1px dashed currentColor}
 .today .P{background:var(--positivo-bg);color:var(--positivo)} .today .N{background:var(--negativo-bg);color:var(--negativo)}
-.today.pending span{opacity:.6;outline:1px dashed currentColor}
 .actions{display:grid;grid-template-columns:1.3fr 1.3fr 1fr 1fr;gap:6px;margin-top:10px}
 .act{height:44px;border-radius:var(--r-sm);font-weight:800;font-size:14px;display:flex;align-items:center;justify-content:center;gap:5px;border:1px solid var(--line);background:var(--bg2)}
 .act:active{transform:scale(.97)}
@@ -600,7 +601,7 @@ function renderLista() {
     const tiene = t => mios.some(e => e.tipo === t);
     const pend = mios.some(e => e.pendiente);
     const cls = tiene('Falta') ? ' has-falta' : (tiene('Retraso') ? ' has-retraso' : '');
-    const hoy = mios.map(e => `<span class="${SIGLA[e.tipo]}">${e.tipo}${e.causa ? ' · ' + esc(e.causa) : ''}</span>`).join('');
+    const hoy = mios.map(e => `<button class="${SIGLA[e.tipo]}" onclick="quitarPorId('${esc(e.id)}')" aria-label="Quitar ${e.tipo}">${e.tipo}${e.causa ? ' · ' + esc(e.causa) : ''}<i>×</i></button>`).join('');
     return `<div class="row${cls}" data-id="${esc(a.apellido)}|${esc(a.nombre)}">
       <div class="row-head">
         <span class="letter">${esc(a.letra || '')}</span>
@@ -649,7 +650,7 @@ function abrirSheet(a, tipo) {
   document.getElementById('sh-name').textContent = titulo(a.apellido) + ', ' + titulo(a.nombre);
   document.getElementById('sh-sub').textContent = S.grupo + ' · ' + fechaBonita(S.fecha) + (S.fecha === hoyISO() ? '' : ' (' + isoAes(S.fecha) + ')');
   document.getElementById('sh-comment').value = '';
-  document.getElementById('sh-hint').textContent = 'Toca una causa y queda registrado al momento.';
+  document.getElementById('sh-hint').textContent = 'Toca una causa y queda registrado al momento. Para quitarlo después, toca su etiqueta en la lista.';
   document.getElementById('sh-causes').innerHTML =
     CAUSAS[tipo].map(c => `<button class="cause" onclick="registrar(${JSON.stringify(c).replace(/"/g, '&quot;')})">${esc(c)}</button>`).join('') +
     `<button class="cause wide" onclick="registrar('')">Sin especificar causa</button>`;
@@ -692,6 +693,16 @@ async function subirEvento(ev) {
   }
 }
 
+function eventoPorId(id) {
+  return eventosHoy().find(e => e.id === id) || (S.histActual || []).find(e => e.id === id);
+}
+function quitarPorId(id) { const ev = eventoPorId(id); if (ev) pedirQuitar(ev); }
+function isoDe(ev) {
+  if (ev.fechaISO) return ev.fechaISO;
+  const m = String(ev.fecha || '').match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+  return m ? m[3] + '-' + m[2] + '-' + m[1] : S.fecha;
+}
+
 function pedirQuitar(ev, sustituirPor) {
   const t = document.getElementById('m-undo-title'), x = document.getElementById('m-undo-text'), ok = document.getElementById('m-undo-ok');
   if (sustituirPor) {
@@ -701,15 +712,26 @@ function pedirQuitar(ev, sustituirPor) {
     ok.onclick = () => { cerrarModal('m-undo'); deshacerEvento(ev); const a = listaGrupo(S.grupo).find(z => mismoAlumno(z, ev)); if (a) abrirSheet(a, sustituirPor); };
   } else {
     t.textContent = `Quitar ${ev.tipo.toLowerCase()}`;
-    x.textContent = `${titulo(ev.apellido)}, ${titulo(ev.nombre)} · ${ev.tipo}${ev.causa ? ' · ' + ev.causa : ''}. Se borra de la hoja y se descuenta del total.`;
+    x.textContent = `${titulo(ev.apellido)}, ${titulo(ev.nombre)} · ${ev.tipo}${ev.causa ? ' · ' + ev.causa : ''} · ${ev.fecha}. Se borra de la hoja y se descuenta del total.`;
     ok.textContent = 'Quitar';
-    ok.onclick = () => { cerrarModal('m-undo'); deshacerEvento(ev); };
+    ok.onclick = async () => { cerrarModal('m-undo'); await deshacerEvento(ev); refrescarPantalla(ev); };
   }
   abrirModal('m-undo');
 }
 
+function refrescarPantalla(ev) {
+  const a = S.alumnoActual;
+  if (document.getElementById('s-student').classList.contains('active') && a) {
+    S.histActual = (S.histActual || []).filter(e => e.id !== ev.id);
+    pintarStats(a);
+    pintarHistorial(S.histActual);
+  } else if (document.getElementById('s-summary').classList.contains('active')) {
+    abrirResumen();
+  }
+}
+
 async function deshacerEvento(ev) {
-  const k = ev.curso + '|' + (ev.fechaISO || S.fecha);
+  const k = ev.curso + '|' + isoDe(ev);
   S.eventos[k] = (S.eventos[k] || []).filter(e => e.id !== ev.id);
   const a = listaGrupo(ev.curso).find(x => mismoAlumno(x, ev));
   if (a) a[CAMPO[ev.tipo]] = Math.max(0, (a[CAMPO[ev.tipo]] || 0) - 1);
@@ -773,14 +795,17 @@ async function abrirAlumno(el) {
   mostrar('s-student');
   try {
     const r = await api({ action: 'history', curso: S.grupo, nombre: a.nombre, apellido: a.apellido });
-    const evs = r.eventos || [];
-    document.getElementById('st-hist-info').textContent = evs.length ? `${evs.length} registro${evs.length > 1 ? 's' : ''}` : 'Sin registros';
-    document.getElementById('st-hist').innerHTML = evs.map(e => eventoHTML(e, false)).join('') ||
-      `<div class="empty">Todavía no hay faltas, retrasos ni incidencias.</div>`;
+    S.histActual = r.eventos || [];
+    pintarHistorial(S.histActual);
   } catch (e) {
     document.getElementById('st-hist-info').textContent = 'Sin conexión';
     document.getElementById('st-hist').innerHTML = `<div class="empty">No se ha podido leer el historial de la hoja.</div>`;
   }
+}
+function pintarHistorial(evs) {
+  document.getElementById('st-hist-info').textContent = evs.length ? `${evs.length} registro${evs.length > 1 ? 's' : ''} · toca × para quitar` : 'Sin registros';
+  document.getElementById('st-hist').innerHTML = evs.map(e => eventoHTML(e, false, true)).join('') ||
+    `<div class="empty">Todavía no hay faltas, retrasos ni incidencias.</div>`;
 }
 function pintarStats(a) {
   document.getElementById('st-p').textContent = a.positivos || 0;
@@ -788,11 +813,12 @@ function pintarStats(a) {
   document.getElementById('st-r').textContent = a.retrasos || 0;
   document.getElementById('st-f').textContent = a.faltas || 0;
 }
-function eventoHTML(e, conNombre) {
+function eventoHTML(e, conNombre, conQuitar) {
   return `<div class="ev"><span class="dot ${esc(e.tipo)}"></span><div class="body">
     <div class="t">${conNombre ? esc(titulo(e.apellido)) + ', ' + esc(titulo(e.nombre)) + ' · ' : ''}${esc(e.tipo)}${e.causa ? ' · ' + esc(e.causa) : ''}</div>
     <div class="d">${esc(e.fecha)}${e.hora ? ' · ' + esc(e.hora) : ''}</div>
-    ${e.comentario ? `<div class="c">${esc(e.comentario)}</div>` : ''}</div></div>`;
+    ${e.comentario ? `<div class="c">${esc(e.comentario)}</div>` : ''}</div>
+    ${conQuitar ? `<button class="x" onclick="quitarPorId('${esc(e.id)}')" aria-label="Quitar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>` : ''}</div>`;
 }
 
 /* =====================================================================
@@ -854,7 +880,7 @@ function abrirResumen() {
      <div class="stat n"><div class="v">${c('Negativo')}</div><div class="l">Negativos</div></div>`;
   const orden = { Falta: 0, Retraso: 1, Negativo: 2, Positivo: 3 };
   const lista = evs.slice().sort((a, b) => orden[a.tipo] - orden[b.tipo] || a.apellido.localeCompare(b.apellido, 'es'));
-  document.getElementById('sum-list').innerHTML = lista.map(e => eventoHTML(e, true)).join('') ||
+  document.getElementById('sum-list').innerHTML = lista.map(e => eventoHTML(e, true, true)).join('') ||
     `<div class="empty"><b>Todos presentes</b>No hay faltas, retrasos ni incidencias en esta fecha.</div>`;
   mostrar('s-summary');
 }
